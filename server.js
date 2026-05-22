@@ -21,9 +21,10 @@ for (const key of requiredEnv) {
 }
 
 const ADMIN_IDS = process.env.ADMIN_IDS.split(',').map(id => parseInt(id.trim())).filter(Boolean);
+const VIP_CHANNEL_ID = process.env.VIP_CHANNEL_ID;
 
 // ==========================================
-// DATABASE SETUP
+// DATABASE
 // ==========================================
 mongoose.connect(process.env.MONGODB_URI)
     .then(() => console.log('✅ MongoDB Connected'))
@@ -51,6 +52,7 @@ const userSchema = new mongoose.Schema({
         renewed: { type: Boolean, default: false }
     }],
     lastPromo: Date,
+    bannedFromChannel: { type: Boolean, default: false },
     createdAt: { type: Date, default: Date.now }
 });
 
@@ -70,8 +72,6 @@ const PromoLog = mongoose.model('PromoLog', promoLogSchema);
 // BOT SETUP
 // ==========================================
 const bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
-
-// Memory store for pending STK transactions
 const pendingTransactions = new Map();
 
 bot.use(session({
@@ -87,24 +87,24 @@ bot.use(conversations());
 // ==========================================
 // ASSETS & MENUS
 // ==========================================
-const IMG_MAIN_BANNER = process.env.IMG_MAIN_BANNER || "https://tech-ish.com/wp-content/uploads/2023/01/8.jpg";
-const IMG_MPESA_BANNER = process.env.IMG_MPESA_BANNER || "https://tech-ish.com/wp-content/uploads/2023/01/8.jpg";
+const IMG_MAIN_BANNER = process.env.IMG_MAIN_BANNER || "https://i.imgur.com/iNaOiyf.jpg";
+const IMG_MPESA_BANNER = process.env.IMG_MPESA_BANNER || "https://i.imgur.com/iNaOiyf.jpg";
 
 const mainMenu = new InlineKeyboard()
-    .text("⚽ VIP PACKAGE 1 ⚽", "cat_1").row()
-    .text("🏀 VIP PACKAGE 2 🏀", "cat_2").row()
-    .text("🎾 VIP PACKAGE 3 🎾", "cat_3").row()
-    .text("💎 ALL OF THE ABOVE 💎", "cat_all").row()
-    .text("⚽ VIP PACKAGE 4 ⚽", "cat_4").row()
-    .url("💬 Support ↗️", "https://t.me/agentkally").row()
+    .text("📺🔞KENYAN PORN ⛔", "cat_1").row()
+    .text("📺TRENDING LEAKS🔞💦", "cat_2").row()
+    .text("📺❤SOMALIA PORN❤", "cat_3").row()
+    .text("❤CELEBRITY LEAKS💦📺", "cat_4").row()
+    .text("💎ALL OF THE ABOVE❤💎", "cat_all").row()
+    .url("💬 Support ↗️", "https://t.me/MultiTech_X").row()
     .text("ℹ️ About", "about")
     .text("📋 Menu", "menu");
 
 const durationMenu = new InlineKeyboard()
-    .text("📅 MONTHLY — 30 days | 499 KSHS", "plan_MONTHLY_499").row()
-    .text("📅 WEEKLY — 7 days | 199 KSHS", "plan_WEEKLY_199").row()
-    .text("📅 BI-WEEKLY — 14 days | 399 KSHS", "plan_BI-WEEKLY_399").row()
-    .text("📅 QUARTERLY — 90 days | 799 KSHS", "plan_QUARTERLY_799").row()
+    .text("📅 1 Week — 7 days | 199 KSHS", "plan_WEEKLY_199").row()
+    .text("📅 1 MONTH — 30 days | 299 KSHS", "plan_MONTHLY_299").row()
+    .text("📅 3 MONTHS — 90 days | 499 KSHS", "plan_QUARTERLY_499").row()
+    .text("📅 LIFETIME | 799 KSHS", "plan_LIFETIME_799").row()
     .text("🔙 Back", "back_home")
     .text("🏠 Home", "back_home");
 
@@ -117,19 +117,24 @@ const renewMenu = (category, plan, amount) => new InlineKeyboard()
     .text("🏠 Home", "back_home");
 
 // ==========================================
-// HELPER FUNCTIONS
+// HELPERS
 // ==========================================
 function getPlanDays(plan) {
-    const plans = { MONTHLY: 30, WEEKLY: 7, 'BI-WEEKLY': 14, QUARTERLY: 90 };
+    const plans = { 
+        'WEEKLY': 7, 
+        'MONTHLY': 30, 
+        'QUARTERLY': 90,
+        'LIFETIME': 36500 
+    };
     return plans[plan] || 30;
 }
 
 function getPlanDisplay(plan) {
     const displays = { 
-        MONTHLY: "30 days", 
-        WEEKLY: "7 days", 
-        'BI-WEEKLY': "14 days", 
-        QUARTERLY: "90 days" 
+        'WEEKLY': "7 days", 
+        'MONTHLY': "30 days", 
+        'QUARTERLY': "90 days",
+        'LIFETIME': "Lifetime access" 
     };
     return displays[plan] || "30 days";
 }
@@ -151,7 +156,18 @@ async function getOrCreateUser(ctx) {
 
 async function unbanUserFromChannel(userId) {
     try {
-        await bot.api.unbanChatMember(process.env.VIP_CHANNEL_ID, userId);
+        await bot.api.unbanChatMember(VIP_CHANNEL_ID, userId);
+        await User.findOneAndUpdate({ telegramId: userId }, { bannedFromChannel: false });
+        return true;
+    } catch (err) {
+        return false;
+    }
+}
+
+async function banUserFromChannel(userId) {
+    try {
+        await bot.api.banChatMember(VIP_CHANNEL_ID, userId);
+        await User.findOneAndUpdate({ telegramId: userId }, { bannedFromChannel: true });
         return true;
     } catch (err) {
         return false;
@@ -173,7 +189,7 @@ async function mpesaPrompt(conversation, ctx) {
         const rawPhone = numberCtx.message?.text;
 
         if (!rawPhone) {
-            await ctx.reply("❌ Invalid input. Please type /start to try again.");
+            await ctx.reply("❌ Invalid input. Type /start to try again.");
             return;
         }
 
@@ -184,9 +200,14 @@ async function mpesaPrompt(conversation, ctx) {
         else if (!phone.startsWith('254')) phone = '254' + phone;
 
         if (phone.length !== 12) {
-            await ctx.reply("❌ Invalid phone number. Please type /start to try again.");
+            await ctx.reply("❌ Invalid phone number. Type /start to try again.");
             return;
         }
+
+        // ✅ FIX 1: Immediate feedback so user knows something is happening
+        await ctx.reply("⏳ Sending M-Pesa prompt to your phone...\n\n📱 Please check for the STK push and enter your PIN.", {
+            reply_markup: cancelMenu
+        });
 
         const reference = 'DEP' + Date.now();
         const payload = {
@@ -216,13 +237,9 @@ async function mpesaPrompt(conversation, ctx) {
 
         await axios.post('https://megapay.co.ke/backend/v1/initiatestk', payload);
 
-        await ctx.reply("⏳ STK Push sent to your M-Pesa!\n\n📱 Check your phone and enter PIN to complete payment.\n\n⚠️ Do NOT close this chat. You will receive your access link automatically after payment.", {
-            reply_markup: cancelMenu
-        });
-
     } catch (err) {
         console.error('🛑 CONVERSATION ERROR:', err.message);
-        await ctx.reply("❌ Session error. Please type /start to try again.");
+        await ctx.reply("❌ Payment initiation failed. Type /start to try again.");
     }
 }
 
@@ -236,14 +253,23 @@ app.post('/api/megapay/webhook', async (req, res) => {
     const data = req.body;
 
     try {
-        const responseCode = data.ResponseCode !== undefined ? data.ResponseCode : data.ResultCode;
-        if (responseCode != 0) return;
+        console.log('[WEBHOOK] Received:', JSON.stringify(data));
 
-        const amount = parseFloat(data.TransactionAmount || data.amount || data.Amount);
-        const receipt = data.TransactionReceipt || data.MpesaReceiptNumber;
-        const rawCallbackPhone = (data.Msisdn || data.phone || data.PhoneNumber || "").toString();
+        const responseCode = data.ResultCode !== undefined ? data.ResultCode : (data.ResponseCode !== undefined ? data.ResponseCode : 1);
+        if (parseInt(responseCode) !== 0) {
+            console.log(`[WEBHOOK] Payment failed with code: ${responseCode}`);
+            return;
+        }
+
+        const amount = parseFloat(data.TransactionAmount || data.amount || data.Amount || 0);
+        const receipt = data.TransactionReceipt || data.MpesaReceiptNumber || data.ReceiptNo || 'N/A';
+        const rawCallbackPhone = (data.Msisdn || data.phone || data.PhoneNumber || data.msisdn || "").toString();
         const last9 = rawCallbackPhone.replace(/\D/g, '').slice(-9);
-        if (last9.length < 9) return;
+
+        if (last9.length < 9) {
+            console.log('[WEBHOOK] Invalid phone in callback');
+            return;
+        }
 
         let matchedPhone = null;
         let transaction = null;
@@ -256,21 +282,28 @@ app.post('/api/megapay/webhook', async (req, res) => {
             }
         }
 
-        if (!transaction) return;
+        if (!transaction) {
+            console.log(`[WEBHOOK] No pending transaction found for phone ending: ${last9}`);
+            return;
+        }
 
-        // Unban user first (in case they were previously removed)
+        console.log(`[WEBHOOK] Match found for user ${transaction.userId}`);
+
+        // Unban if previously removed
         await unbanUserFromChannel(transaction.userId);
 
-        const invite = await bot.api.createChatInviteLink(process.env.VIP_CHANNEL_ID, {
+        // ✅ FIX 2: One-time invite link (member_limit: 1 = only 1 person can ever join)
+        const invite = await bot.api.createChatInviteLink(VIP_CHANNEL_ID, {
             member_limit: 1,
-            name: `${transaction.plan} - ${receipt}`
+            name: `${transaction.plan} - ${receipt}`,
+            expire_date: Math.floor(Date.now() / 1000) + (24 * 60 * 60)
         });
 
         const endDate = new Date();
         endDate.setDate(endDate.getDate() + getPlanDays(transaction.plan));
 
-        // Save subscription to database
-        await User.findOneAndUpdate(
+        // Save subscription
+        const user = await User.findOneAndUpdate(
             { telegramId: transaction.userId },
             {
                 $set: {
@@ -278,7 +311,7 @@ app.post('/api/megapay/webhook', async (req, res) => {
                     firstName: transaction.firstName,
                     lastName: transaction.lastName,
                     phone: transaction.phone,
-                    lastActivity: new Date()
+                    bannedFromChannel: false
                 },
                 $push: {
                     subscriptions: {
@@ -295,14 +328,15 @@ app.post('/api/megapay/webhook', async (req, res) => {
                     }
                 }
             },
-            { upsert: true }
+            { upsert: true, new: true, returnDocument: 'after' }
         );
 
-        const successText = `🎉 **PAYMENT SUCCESSFUL!**\n\nThank you for your payment! Your transaction has been confirmed and your premium access is now ready.\n\n💰 **PAYMENT DETAILS**\n━━━━━━━━━━━━━━━\n▪️ Amount: KES ${amount}\n▪️ M-Pesa Receipt: ${receipt}\n▪️ Phone: ${rawCallbackPhone}\n▪️ Date: ${transaction.date}\n\n🔗 **CHANNEL ACCESS**\n━━━━━━━━━━━━━━━\n▪️ Channel: ${transaction.category}\n▪️ Plan: ${transaction.plan}\n▪️ Expires: ${endDate.toLocaleDateString()}\n▪️ Usage: Single-use link.\n\n⚠️ **Important:** This link expires in 24 hours and can only be used once.\n\nNeed help? Contact our support team.`;
+        // Success message with explicit one-time warning
+        const successText = `🎉 **PAYMENT SUCCESSFUL!**\n\nThank you for your payment! Your premium access is now ready.\n\n💰 **PAYMENT DETAILS**\n━━━━━━━━━━━━━━━\n▪️ Amount: KES ${amount}\n▪️ M-Pesa Receipt: ${receipt}\n▪️ Phone: ${rawCallbackPhone}\n▪️ Date: ${transaction.date}\n\n🔗 **CHANNEL ACCESS**\n━━━━━━━━━━━━━━━\n▪️ Channel: ${transaction.category}\n▪️ Plan: ${transaction.plan}\n▪️ Expires: ${endDate.toLocaleDateString()}\n\n⚠️ **ONE-TIME LINK:** This link can only be used **ONCE**. Once you click and join, it dies immediately. Do NOT share it.\n\nNeed help? Contact our support team.`;
 
         const linkMenu = new InlineKeyboard()
             .url(`🔗 JOIN ${transaction.category} 🔗`, invite.invite_link).row()
-            .url("💬 Support ↗️", "https://t.me/agentkally");
+            .url("💬 Support ↗️", "https://t.me/MultiTech_X");
 
         await bot.api.sendMessage(transaction.chatId, successText, {
             reply_markup: linkMenu,
@@ -310,10 +344,10 @@ app.post('/api/megapay/webhook', async (req, res) => {
         });
 
         pendingTransactions.delete(matchedPhone);
-        console.log(`✅ Subscription activated for ${transaction.userId}`);
+        console.log(`✅ Subscription activated for ${transaction.userId} until ${endDate.toISOString()}`);
 
     } catch (err) {
-        console.error("Webhook Error:", err);
+        console.error("[WEBHOOK] Fatal Error:", err.message);
     }
 });
 
@@ -323,7 +357,7 @@ app.post('/api/megapay/webhook', async (req, res) => {
 
 bot.command("start", async (ctx) => {
     await getOrCreateUser(ctx);
-    const welcomeText = `Hello ${ctx.from.first_name || ''}\n🔥 Welcome to VIP ACCESS\nChoose your subscription package below 👇`;
+    const welcomeText = `Hello ${ctx.from.first_name || ''}\n🔥 Welcome to INNER  CIRCLE VIP ACCESS\nChoose your subscription package below 👇`;
     await ctx.replyWithPhoto(IMG_MAIN_BANNER, { caption: welcomeText, reply_markup: mainMenu });
 });
 
@@ -402,27 +436,26 @@ bot.callbackQuery("admin_remind", async (ctx) => {
     await ctx.reply("✅ Reminders sent!");
 });
 
-// CATEGORY HANDLERS
+// CATEGORY & PLAN HANDLERS
 bot.callbackQuery(/^cat_/, async (ctx) => {
     const categories = {
-        'cat_1': '⚽ VIP PACKAGE 1 ⚽',
-        'cat_2': '🏀 VIP PACKAGE 2 🏀',
-        'cat_3': '🎾 VIP PACKAGE 3 🎾',
-        'cat_all': '💎 ALL OF THE ABOVE 💎',
-        'cat_4': '⚽ VIP PACKAGE 4 ⚽'
+        'cat_1': '📺🔞KENYAN PORN ⛔',
+        'cat_2': '📺TRENDING LEAKS🔞💦',
+        'cat_3': '📺❤SOMALIA PORN❤',
+        'cat_4': '❤CELEBRITY LEAKS💦📺',
+        'cat_all': '💎ALL OF THE ABOVE❤💎'
     };
-
+    
     ctx.session.selectedCategory = categories[ctx.callbackQuery.data];
     const durationText = `${ctx.session.selectedCategory}\n\nPay to watch all exclusive content full videos\n\nChoose your plan:`;
-
+    
     await ctx.editMessageMedia({
         type: 'photo', media: IMG_MPESA_BANNER, caption: durationText, parse_mode: "Markdown"
     }, { reply_markup: durationMenu });
-
+    
     await ctx.answerCallbackQuery();
 });
 
-// PLAN SELECTION
 bot.callbackQuery(/^plan_/, async (ctx) => {
     const parts = ctx.callbackQuery.data.split('_');
     ctx.session.planName = parts[1];
@@ -436,7 +469,6 @@ bot.callbackQuery(/^plan_/, async (ctx) => {
     await ctx.conversation.enter("mpesaPrompt");
 });
 
-// RENEWAL HANDLER
 bot.callbackQuery(/^renew_/, async (ctx) => {
     const parts = ctx.callbackQuery.data.split('_');
     ctx.session.planName = parts[1];
@@ -478,7 +510,7 @@ async function sendPromoToAll(message, type = 'promo') {
                 reply_markup: mainMenu 
             });
             sent++;
-            await new Promise(r => setTimeout(r, 50)); // Rate limit protection
+            await new Promise(r => setTimeout(r, 50));
         } catch (e) {
             failed++;
         }
@@ -493,26 +525,27 @@ async function sendPromoToAll(message, type = 'promo') {
 // CRON JOBS
 // ==========================================
 
-// 1. REMINDER JOB - Daily at 9:00 AM
+// 1. REMINDER JOB — Daily at 9:00 AM
 async function runReminders() {
     const now = new Date();
-    const twoDaysFromNow = new Date(now);
-    twoDaysFromNow.setDate(twoDaysFromNow.getDate() + 2);
-    twoDaysFromNow.setHours(23, 59, 59, 999);
-
     const twoDaysStart = new Date(now);
     twoDaysStart.setDate(twoDaysStart.getDate() + 2);
     twoDaysStart.setHours(0, 0, 0, 0);
+    
+    const twoDaysEnd = new Date(now);
+    twoDaysEnd.setDate(twoDaysEnd.getDate() + 2);
+    twoDaysEnd.setHours(23, 59, 59, 999);
 
     const users = await User.find({
         'subscriptions.status': 'active',
-        'subscriptions.endDate': { $gte: twoDaysStart, $lte: twoDaysFromNow },
+        'subscriptions.endDate': { $gte: twoDaysStart, $lte: twoDaysEnd },
         'subscriptions.reminded': false
     });
 
     for (const user of users) {
+        let saved = false;
         for (const sub of user.subscriptions) {
-            if (sub.status !== 'active' || sub.reminded) continue;
+            if (sub.status !== 'active' || sub.reminded || sub.endDate < twoDaysStart || sub.endDate > twoDaysEnd) continue;
             
             const daysLeft = Math.ceil((sub.endDate - now) / (1000 * 60 * 60 * 24));
             if (daysLeft === 2) {
@@ -525,19 +558,20 @@ async function runReminders() {
                     });
                     
                     sub.reminded = true;
-                    console.log(`⏰ Reminder sent to ${user.telegramId}`);
+                    saved = true;
+                    console.log(`⏰ Reminder sent to ${user.telegramId} for ${sub.plan}`);
                 } catch (err) {
                     console.error(`Failed to remind ${user.telegramId}:`, err.message);
                 }
             }
         }
-        await user.save();
+        if (saved) await user.save();
     }
 }
 
 cron.schedule('0 9 * * *', runReminders);
 
-// 2. EXPIRY & REMOVAL JOB - Every hour
+// 2. EXPIRY & REMOVAL JOB — Every hour
 cron.schedule('0 * * * *', async () => {
     const now = new Date();
     const users = await User.find({
@@ -546,22 +580,16 @@ cron.schedule('0 * * * *', async () => {
     });
 
     for (const user of users) {
-        let removed = false;
+        let saved = false;
         
         for (const sub of user.subscriptions) {
             if (sub.status !== 'active' || sub.endDate >= now) continue;
             
             sub.status = 'expired';
+            saved = true;
             
-            // Remove from channel
-            try {
-                await bot.api.banChatMember(process.env.VIP_CHANNEL_ID, user.telegramId);
-                removed = true;
-            } catch (err) {
-                console.error(`Failed to ban ${user.telegramId}:`, err.message);
-            }
+            const banned = await banUserFromChannel(user.telegramId);
 
-            // Send expiry notice with promo
             try {
                 const expiryText = `⏰ **SUBSCRIPTION EXPIRED**\n\nYour access to ${sub.category} has ended.\n\n🔥 **RENEW NOW** to continue enjoying exclusive content!\n\n💰 ${sub.plan} — KES ${sub.amount}`;
                 
@@ -574,12 +602,11 @@ cron.schedule('0 * * * *', async () => {
             }
         }
         
-        await user.save();
-        if (removed) console.log(`🚫 Removed user ${user.telegramId} from channel`);
+        if (saved) await user.save();
     }
 });
 
-// 3. WIN-BACK PROMO - Every 3 days at 2 PM to expired users
+// 3. WIN-BACK PROMO — Every 3 days at 2 PM
 cron.schedule('0 14 */3 * *', async () => {
     const threeDaysAgo = new Date();
     threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
@@ -599,7 +626,7 @@ cron.schedule('0 14 */3 * *', async () => {
             user.lastPromo = new Date();
             await user.save();
         } catch (e) {
-            // Ignore
+            // Ignore blocked users
         }
     }
 });
@@ -616,8 +643,8 @@ bot.catch((err) => {
 });
 
 // ==========================================
-// START SERVERS
+// START
 // ==========================================
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3011;
 app.listen(PORT, () => console.log(`🌐 Server listening on port ${PORT}`));
 bot.start({ onStart: (botInfo) => console.log(`🤖 Bot @${botInfo.username} started!`) });
