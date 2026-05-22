@@ -357,7 +357,7 @@ app.post('/api/megapay/webhook', async (req, res) => {
 
 bot.command("start", async (ctx) => {
     await getOrCreateUser(ctx);
-    const welcomeText = `Hello ${ctx.from.first_name || ''}\n🔥 Welcome to INNER  CIRCLE VIP ACCESS\nChoose your subscription package below 👇`;
+    const welcomeText = `Hello ${ctx.from.first_name || ''}\n🔥 Welcome to SABLENYA VIP ACCESS❤\nChoose your subscription package below 👇`;
     await ctx.replyWithPhoto(IMG_MAIN_BANNER, { caption: welcomeText, reply_markup: mainMenu });
 });
 
