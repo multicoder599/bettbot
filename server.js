@@ -194,6 +194,12 @@ function getCategoryKeyFromSub(sub) {
     return 'cat_1';
 }
 
+// ✅ Sanitize user text for Telegram Markdown
+function md(text) {
+    if (!text) return '';
+    return text.toString().replace(/[*_`]/g, '');
+}
+
 async function getOrCreateUser(ctx) {
     const from = ctx.from;
     let user = await User.findOne({ telegramId: from.id });
@@ -233,7 +239,7 @@ async function banUserFromChannel(userId) {
     }
 }
 
-// ✅ SAFE EDIT: Handles both text-only and media messages
+// ✅ SAFE EDIT: Handles both text-only and media messages, catches markdown errors
 async function safeEditMessage(ctx, text, replyMarkup, parseMode = "Markdown") {
     try {
         if (ctx.callbackQuery.message.photo && ctx.callbackQuery.message.photo.length > 0) {
@@ -242,27 +248,43 @@ async function safeEditMessage(ctx, text, replyMarkup, parseMode = "Markdown") {
             await ctx.editMessageText(text, { reply_markup: replyMarkup, parse_mode: parseMode });
         }
     } catch (err) {
-        console.error("safeEditMessage error:", err.message);
-        await ctx.reply(text, { reply_markup: replyMarkup, parse_mode: parseMode });
+        if (err.message && err.message.includes("can't parse entities")) {
+            console.warn("Markdown parse failed, retrying plain text:", err.message);
+            try {
+                if (ctx.callbackQuery.message.photo && ctx.callbackQuery.message.photo.length > 0) {
+                    await ctx.editMessageCaption({ caption: text, reply_markup: replyMarkup });
+                } else {
+                    await ctx.editMessageText(text, { reply_markup: replyMarkup });
+                }
+            } catch (err2) {
+                console.error("Plain text fallback failed:", err2.message);
+                await ctx.reply(text, { reply_markup: replyMarkup });
+            }
+        } else {
+            console.error("safeEditMessage error:", err.message);
+            try {
+                await ctx.reply(text, { reply_markup: replyMarkup });
+            } catch (e) {}
+        }
     }
 }
 
 // ✅ ACCOUNT VIEW HELPERS
 function getAccountText(user) {
     const activeSubs = user.subscriptions.filter(s => s.status === 'active' && s.endDate > new Date());
-    let text = `👤 **MY ACCOUNT**\n━━━━━━━━━━━━━━━\n`;
-    text += `Welcome back, **${user.firstName || 'VIP Member'}**${user.username ? ' (@' + user.username + ')' : ''}!\n\n`;
+    let text = `👤 *MY ACCOUNT*\n━━━━━━━━━━━━━━━\n`;
+    text += `Welcome back, *${md(user.firstName) || 'VIP Member'}*${user.username ? ' (@' + md(user.username) + ')' : ''}!\n\n`;
     
     if (activeSubs.length === 0) {
         text += `❌ You have no active subscriptions.\n\nTap below to subscribe or renew 👇`;
     } else {
-        text += `📦 **ACTIVE SUBSCRIPTIONS**\n━━━━━━━━━━━━━━━\n`;
+        text += `📦 *ACTIVE SUBSCRIPTIONS*\n━━━━━━━━━━━━━━━\n`;
         activeSubs.forEach((sub, i) => {
             const daysLeft = Math.ceil((sub.endDate - new Date()) / (1000 * 60 * 60 * 24));
-            text += `\n${i + 1}. **${sub.category}**\n`;
-            text += `   📅 Plan: ${sub.plan} (${getPlanDisplay(sub.plan)})\n`;
+            text += `\n${i + 1}. *${md(sub.category)}*\n`;
+            text += `   📅 Plan: ${md(sub.plan)} (${getPlanDisplay(sub.plan)})\n`;
             text += `   💵 Amount: KES ${sub.amount}\n`;
-            text += `   ⏳ Expires in: **${daysLeft} days**\n`;
+            text += `   ⏳ Expires in: *${daysLeft} days*\n`;
             text += `   📆 Expiry Date: ${sub.endDate.toLocaleDateString()}\n`;
         });
     }
@@ -274,16 +296,14 @@ function getAccountMenu(user) {
     const activeSubs = user.subscriptions.filter(s => s.status === 'active' && s.endDate > new Date());
     
     if (activeSubs.length > 0) {
-        // Renew buttons for each active subscription
         activeSubs.forEach(sub => {
             const catKey = getCategoryKeyFromSub(sub);
             const prices = CATEGORY_PRICES[catKey];
             if (prices && prices[sub.plan]) {
-                menu.text(`♻️ Renew ${sub.category} — ${sub.plan}`, `renew_${sub.plan}_${prices[sub.plan]}_${catKey}`).row();
+                menu.text(`♻️ Renew ${md(sub.category)} — ${md(sub.plan)}`, `renew_${sub.plan}_${prices[sub.plan]}_${catKey}`).row();
             }
         });
         
-        // Suggestive plans from the first active category
         if (activeSubs.length >= 1) {
             const sub = activeSubs[0];
             const catKey = getCategoryKeyFromSub(sub);
@@ -310,7 +330,7 @@ function getAccountMenu(user) {
 
 async function notifyAdminNewSubscription(user, sub) {
     const planDetail = `${sub.category} — ${sub.plan}`;
-    const text = `💰 **NEW SALE: ${planDetail}**\n━━━━━━━━━━━━━━━\n👤 ${user.firstName || 'Unknown'} (@${user.username || 'N/A'})\n🆔 ${user.telegramId}\n📱 ${user.phone || 'N/A'}\n📦 ${sub.category}\n📅 ${sub.plan}\n💵 KES ${sub.amount}\n🕐 ${sub.startDate.toLocaleString()}`;
+    const text = `💰 *NEW SALE: ${md(planDetail)}*\n━━━━━━━━━━━━━━━\n👤 ${md(user.firstName) || 'Unknown'} (@${md(user.username) || 'N/A'})\n🆔 ${user.telegramId}\n📱 ${md(user.phone) || 'N/A'}\n📦 ${md(sub.category)}\n📅 ${md(sub.plan)}\n💵 KES ${sub.amount}\n🕐 ${sub.startDate.toLocaleString()}`;
     
     if (ADMIN_CHANNEL_ID) {
         try {
@@ -331,7 +351,7 @@ async function notifyAdminNewSubscription(user, sub) {
 
 async function notifyAdminRemoval(user, sub) {
     const planDetail = `${sub.category} — ${sub.plan}`;
-    const text = `🚫 **REMOVED: ${planDetail}**\n━━━━━━━━━━━━━━━\n👤 ${user.firstName || 'Unknown'} (@${user.username || 'N/A'})\n🆔 ${user.telegramId}\n📦 ${sub.category}\n📅 ${sub.plan} (expired)\n🕐 ${new Date().toLocaleString()}`;
+    const text = `🚫 *REMOVED: ${md(planDetail)}*\n━━━━━━━━━━━━━━━\n👤 ${md(user.firstName) || 'Unknown'} (@${md(user.username) || 'N/A'})\n🆔 ${user.telegramId}\n📦 ${md(sub.category)}\n📅 ${md(sub.plan)} (expired)\n🕐 ${new Date().toLocaleString()}`;
     
     if (ADMIN_CHANNEL_ID) {
         try {
@@ -512,10 +532,10 @@ app.post('/api/megapay/webhook', async (req, res) => {
             { upsert: true, new: true, returnDocument: 'after' }
         );
 
-        const successText = `🎉 **PAYMENT SUCCESSFUL!**\n\nThank you for your payment! Your premium access is now ready.\n\n💰 **PAYMENT DETAILS**\n━━━━━━━━━━━━━━━\n▪️ Amount: KES ${amount}\n▪️ M-Pesa Receipt: ${receipt}\n▪️ Phone: ${rawCallbackPhone}\n▪️ Date: ${transaction.date}\n\n🔗 **CHANNEL ACCESS**\n━━━━━━━━━━━━━━━\n▪️ Channel: ${transaction.category}\n▪️ Plan: ${transaction.plan}\n▪️ Expires: ${endDate.toLocaleDateString()}\n\n⚠️ **ONE-TIME LINK:** This link can only be used **ONCE**. Once you click and join, it dies immediately. Do NOT share it.\n\nNeed help? Contact our support team.`;
+        const successText = `🎉 *PAYMENT SUCCESSFUL!*\n\nThank you for your payment! Your premium access is now ready.\n\n💰 *PAYMENT DETAILS*\n━━━━━━━━━━━━━━━\n▪️ Amount: KES ${amount}\n▪️ M-Pesa Receipt: ${receipt}\n▪️ Phone: ${rawCallbackPhone}\n▪️ Date: ${transaction.date}\n\n🔗 *CHANNEL ACCESS*\n━━━━━━━━━━━━━━━\n▪️ Channel: ${md(transaction.category)}\n▪️ Plan: ${md(transaction.plan)}\n▪️ Expires: ${endDate.toLocaleDateString()}\n\n⚠️ *ONE-TIME LINK:* This link can only be used *ONCE*. Once you click and join, it dies immediately. Do NOT share it.\n\nNeed help? Contact our support team.`;
 
         const linkMenu = new InlineKeyboard()
-            .url(`🔗 JOIN ${transaction.category} 🔗`, invite.invite_link).row()
+            .url(`🔗 JOIN ${md(transaction.category)} 🔗`, invite.invite_link).row()
             .url("💬 Support ↗️", "https://t.me/theopperator");
 
         await bot.api.sendMessage(transaction.chatId, successText, {
@@ -540,7 +560,7 @@ app.post('/api/megapay/webhook', async (req, res) => {
 
 bot.command("start", async (ctx) => {
     await getOrCreateUser(ctx);
-    const welcomeText = `Hello ${ctx.from.first_name || ''}\n🔥 Welcome to 🥵💦SABLENYA VIP ACCESS❤\nChoose your subscription package below 👇`;
+    const welcomeText = `Hello ${md(ctx.from.first_name) || ''}\n🔥 Welcome to 🥵💦SABLENYA VIP ACCESS❤\nChoose your subscription package below 👇`;
     await ctx.replyWithPhoto(IMG_MAIN_BANNER, { caption: welcomeText, reply_markup: mainMenu });
 });
 
@@ -552,10 +572,10 @@ bot.command("status", async (ctx) => {
         return ctx.reply("❌ You have no active subscriptions.\n\nTap below to subscribe:", { reply_markup: mainMenu });
     }
 
-    let text = `📊 **YOUR SUBSCRIPTIONS**\n━━━━━━━━━━━━━━━\n`;
+    let text = `📊 *YOUR SUBSCRIPTIONS*\n━━━━━━━━━━━━━━━\n`;
     activeSubs.forEach((sub, i) => {
         const daysLeft = Math.ceil((sub.endDate - new Date()) / (1000 * 60 * 60 * 24));
-        text += `\n${i + 1}. ${sub.category}\n   📅 Plan: ${sub.plan}\n   ⏳ ${daysLeft} days remaining\n   📆 Expires: ${sub.endDate.toLocaleDateString()}\n`;
+        text += `\n${i + 1}. ${md(sub.category)}\n   📅 Plan: ${md(sub.plan)}\n   ⏳ ${daysLeft} days remaining\n   📆 Expires: ${sub.endDate.toLocaleDateString()}\n`;
     });
 
     ctx.reply(text, { parse_mode: "Markdown", reply_markup: mainMenu });
@@ -579,7 +599,7 @@ bot.command("admin", async (ctx) => {
         .text("👥 24H Sales Report", "admin_users").row()
         .text("🔄 Force Reminder", "admin_remind").row();
     
-    ctx.reply("🔧 **ADMIN PANEL**", { parse_mode: "Markdown", reply_markup: menu });
+    ctx.reply("🔧 *ADMIN PANEL*", { parse_mode: "Markdown", reply_markup: menu });
 });
 
 bot.command("broadcast", async (ctx) => {
@@ -636,14 +656,14 @@ bot.callbackQuery("admin_stats", async (ctx) => {
         breakdownText += `\n${plan}: ${data.count} sales — KES ${data.revenue}`;
     });
     
-    let text = `📊 **TODAY'S STATS**\n━━━━━━━━━━━━━━━\n`;
+    let text = `📊 *TODAY'S STATS*\n━━━━━━━━━━━━━━━\n`;
     text += `👥 Total Users: ${totalUsers}\n`;
     text += `✅ Active Subs: ${activeSubs}\n`;
     text += `💰 Today: ${todayCount} subs — KES ${todayRevenue}\n`;
     text += `📅 ${todayStart.toLocaleDateString()}\n`;
     
     if (sortedPlans.length > 0) {
-        text += `\n🏆 **TOP PERFORMERS TODAY**\n━━━━━━━━━━━━━━━${breakdownText}\n`;
+        text += `\n🏆 *TOP PERFORMERS TODAY*\n━━━━━━━━━━━━━━━${breakdownText}\n`;
     }
     
     await ctx.editMessageText(text, { parse_mode: "Markdown" });
@@ -689,8 +709,8 @@ bot.callbackQuery("admin_users", async (ctx) => {
                 time: sub.startDate.toLocaleString()
             });
             
-            userList += `\n${count}. ${u.firstName || 'Unknown'} (@${u.username || 'N/A'})\n`;
-            userList += `   📦 ${sub.category} — ${sub.plan}\n`;
+            userList += `\n${count}. ${md(u.firstName) || 'Unknown'} (@${md(u.username) || 'N/A'})\n`;
+            userList += `   📦 ${md(sub.category)} — ${md(sub.plan)}\n`;
             userList += `   💵 KES ${sub.amount} | 🕐 ${sub.startDate.toLocaleString()}\n`;
         });
     });
@@ -703,15 +723,15 @@ bot.callbackQuery("admin_users", async (ctx) => {
         rank++;
     });
     
-    let text = `📋 **24H SALES REPORT**\n━━━━━━━━━━━━━━━\n`;
+    let text = `📋 *24H SALES REPORT*\n━━━━━━━━━━━━━━━\n`;
     text += `👥 Total Subscriptions: ${count}\n`;
     text += `💰 Total Revenue: KES ${totalAmount}\n`;
     
     if (sortedPlans.length > 0) {
-        text += `\n🏆 **SALES BY PLAN (Ranked)**\n━━━━━━━━━━━━━━━${breakdownText}\n`;
+        text += `\n🏆 *SALES BY PLAN (Ranked)*\n━━━━━━━━━━━━━━━${breakdownText}\n`;
     }
     
-    text += `\n━━━━━━━━━━━━━━━\n👤 **DETAILED LIST**\n━━━━━━━━━━━━━━━${userList || '\nNo sales in last 24 hours.'}`;
+    text += `\n━━━━━━━━━━━━━━━\n👤 *DETAILED LIST*\n━━━━━━━━━━━━━━━${userList || '\nNo sales in last 24 hours.'}`;
     
     if (text.length > 4000) {
         text = text.substring(0, 4000) + '\n\n... (truncated)';
@@ -746,7 +766,7 @@ bot.callbackQuery(/^cat_/, async (ctx) => {
     const durationText = `${ctx.session.selectedCategory}\n\nPay to watch all exclusive content full videos\n\nChoose your plan:`;
     
     await ctx.editMessageMedia({
-        type: 'photo', media: IMG_MPESA_BANNER, caption: durationText, parse_mode: "Markdown"
+        type: 'photo', media: IMG_MPESA_BANNER, caption: durationText
     }, { reply_markup: getDurationMenu(catKey) });
     
     await ctx.answerCallbackQuery();
@@ -771,7 +791,7 @@ bot.callbackQuery(/^plan_/, async (ctx) => {
     ctx.session.amount = amount;
 
     const planDisplay = getPlanDisplay(plan);
-    const confirmText = `${ctx.session.selectedCategory}\n\n📅 Plan: ${planDisplay} — KES ${amount}\n\n📱 **Enter your M-Pesa number:**\nFormat: 07XXXXXXXX or 01XXXXXXXX\n\nType your number in the chat below 👇`;
+    const confirmText = `${ctx.session.selectedCategory}\n\n📅 Plan: ${planDisplay} — KES ${amount}\n\n📱 *Enter your M-Pesa number:*\nFormat: 07XXXXXXXX or 01XXXXXXXX\n\nType your number in the chat below 👇`;
 
     await safeEditMessage(ctx, confirmText, cancelMenu, "Markdown");
     await ctx.answerCallbackQuery();
@@ -799,7 +819,7 @@ bot.callbackQuery(/^renew_/, async (ctx) => {
     ctx.session.selectedCategory = CATEGORIES[categoryKey];
 
     const planDisplay = getPlanDisplay(plan);
-    const confirmText = `♻️ **RENEW SUBSCRIPTION**\n\n${ctx.session.selectedCategory}\n📅 Plan: ${planDisplay} — KES ${amount}\n\n📱 **Enter your M-Pesa number:**\nFormat: 07XXXXXXXX or 01XXXXXXXX`;
+    const confirmText = `♻️ *RENEW SUBSCRIPTION*\n\n${ctx.session.selectedCategory}\n📅 Plan: ${planDisplay} — KES ${amount}\n\n📱 *Enter your M-Pesa number:*\nFormat: 07XXXXXXXX or 01XXXXXXXX`;
 
     await safeEditMessage(ctx, confirmText, cancelMenu, "Markdown");
     await ctx.answerCallbackQuery();
@@ -809,7 +829,7 @@ bot.callbackQuery(/^renew_/, async (ctx) => {
 bot.callbackQuery("back_home", async (ctx) => {
     await ctx.conversation.exit();
     userIntent.delete(ctx.from.id);
-    const welcomeText = `Hello ${ctx.from.first_name || ''}\n🔥 Welcome to VIP ACCESS\nChoose your subscription package below 👇`;
+    const welcomeText = `Hello ${md(ctx.from.first_name) || ''}\n🔥 Welcome to VIP ACCESS\nChoose your subscription package below 👇`;
     
     try {
         if (ctx.callbackQuery.message.photo && ctx.callbackQuery.message.photo.length > 0) {
@@ -894,7 +914,7 @@ async function runReminders() {
             
             try {
                 const catKey = getCategoryKeyFromSub(sub);
-                const text = `⏰ **SUBSCRIPTION EXPIRING SOON**\n\nYour ${sub.category} (${sub.plan}) expires in **2 days** (${sub.endDate.toLocaleDateString()}).\n\n💡 **Smart move:** Most VIP members upgrade to longer plans. Why? Better value, zero interruptions, and you lock in today's price.\n\n🔥 **Popular upgrades:**\n• 3 Months — save 40% vs weekly\n• Lifetime — never pay again\n\n👇 Renew or upgrade below:`;
+                const text = `⏰ *SUBSCRIPTION EXPIRING SOON*\n\nYour ${md(sub.category)} (${md(sub.plan)}) expires in *2 days* (${sub.endDate.toLocaleDateString()}).\n\n💡 *Smart move:* Most VIP members upgrade to longer plans. Why? Better value, zero interruptions, and you lock in today's price.\n\n🔥 *Popular upgrades:*\n• 3 Months — save 40% vs weekly\n• Lifetime — never pay again\n\n👇 Renew or upgrade below:`;
                 
                 await bot.api.sendMessage(user.telegramId, text, {
                     parse_mode: "Markdown",
@@ -944,7 +964,7 @@ async function runReminders() {
             
             try {
                 const catKey = getCategoryKeyFromSub(sub);
-                const text = `⏰ **FINAL NOTICE — EXPIRES TOMORROW!**\n\nYour ${sub.category} (${sub.plan}) ends **tomorrow** (${sub.endDate.toLocaleDateString()}).\n\n⚠️ This is your **final warning**. Once expired, you'll be removed from the channel and lose access to all content.\n\n💎 **Don't just renew — upgrade!** Longer plans = bigger savings.\n\n👇 This is your last chance 👇`;
+                const text = `⏰ *FINAL NOTICE — EXPIRES TOMORROW!*\n\nYour ${md(sub.category)} (${md(sub.plan)}) ends *tomorrow* (${sub.endDate.toLocaleDateString()}).\n\n⚠️ This is your *final warning*. Once expired, you'll be removed from the channel and lose access to all content.\n\n💎 *Don't just renew — upgrade!* Longer plans = bigger savings.\n\n👇 This is your last chance 👇`;
                 
                 await bot.api.sendMessage(user.telegramId, text, {
                     parse_mode: "Markdown",
@@ -996,7 +1016,7 @@ cron.schedule('0 * * * *', async () => {
             await notifyAdminRemoval(user, sub);
 
             try {
-                const expiryText = `⏰ **ACCESS REVOKED**\n\nYour ${sub.category} subscription has expired. You've been removed from the VIP channel.\n\n😢 You're missing out! Fresh content drops daily and thousands of members are enjoying it right now.\n\n🔥 **Come back stronger:** Choose any plan below and rejoin instantly 👇`;
+                const expiryText = `⏰ *ACCESS REVOKED*\n\nYour ${md(sub.category)} subscription has expired. You've been removed from the VIP channel.\n\n😢 You're missing out! Fresh content drops daily and thousands of members are enjoying it right now.\n\n🔥 *Come back stronger:* Choose any plan below and rejoin instantly 👇`;
                 
                 await bot.api.sendMessage(user.telegramId, expiryText, {
                     parse_mode: "Markdown",
@@ -1030,7 +1050,7 @@ cron.schedule('0 14 */3 * *', async () => {
     for (const user of users) {
         try {
             await bot.api.sendMessage(user.telegramId, 
-                `🔥 **WE MISS YOU!**\n\nYour VIP access expired recently. Here's an exclusive offer:\n\n✅ Renew ANY plan today\n✅ Get instant channel access\n✅ New content dropped daily!\n\nTap /start to grab your spot back!`, 
+                `🔥 *WE MISS YOU!*\n\nYour VIP access expired recently. Here's an exclusive offer:\n\n✅ Renew ANY plan today\n✅ Get instant channel access\n✅ New content dropped daily!\n\nTap /start to grab your spot back!`, 
                 { parse_mode: "Markdown", reply_markup: mainMenu }
             );
             user.lastPromo = new Date();
